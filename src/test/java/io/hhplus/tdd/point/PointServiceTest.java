@@ -183,4 +183,66 @@ class PointServiceTest {
         assertEquals(TransactionType.CHARGE, result.get(1).type());
         assertEquals(TransactionType.USE, result.get(2).type());
     }
+
+    @Test
+    @DisplayName("포인트 충전 - 1회 충전 한도 초과 (100,000 초과)")
+    void chargePoint_ExceedsMaxChargeLimit() {
+        // given
+        long userId = 1L;
+        long exceedAmount = 100_001L;
+
+        // when & then
+        assertThrows(IllegalArgumentException.class, () -> {
+            pointService.chargePoint(userId, exceedAmount);
+        });
+    }
+
+    @Test
+    @DisplayName("포인트 충전 - 최소 충전 금액 미만 (100 미만)")
+    void chargePoint_BelowMinimumAmount() {
+        // given
+        long userId = 1L;
+        long belowMinimum = 99L;
+
+        // when & then
+        assertThrows(IllegalArgumentException.class, () -> {
+            pointService.chargePoint(userId, belowMinimum);
+        });
+    }
+
+    @Test
+    @DisplayName("포인트 충전 - 최대 보유 한도 초과 (1,000,000 초과)")
+    void chargePoint_ExceedsMaxBalance() {
+        // given
+        long userId = 1L;
+        pointService.chargePoint(userId, 100_000L);
+        pointService.chargePoint(userId, 100_000L);
+        pointService.chargePoint(userId, 100_000L);
+        pointService.chargePoint(userId, 100_000L);
+        pointService.chargePoint(userId, 100_000L);
+        pointService.chargePoint(userId, 100_000L);
+        pointService.chargePoint(userId, 100_000L);
+        pointService.chargePoint(userId, 100_000L);
+        pointService.chargePoint(userId, 100_000L);
+        // Total: 900,000
+
+        // when & then
+        assertThrows(IllegalArgumentException.class, () -> {
+            pointService.chargePoint(userId, 100_001L); // Total would be 1,000,001
+        });
+    }
+
+    @Test
+    @DisplayName("포인트 사용 - 최소 사용 금액 미만 (100 미만)")
+    void usePoint_BelowMinimumAmount() {
+        // given
+        long userId = 1L;
+        pointService.chargePoint(userId, 1000L);
+        long belowMinimum = 99L;
+
+        // when & then
+        assertThrows(IllegalArgumentException.class, () -> {
+            pointService.usePoint(userId, belowMinimum);
+        });
+    }
 }
