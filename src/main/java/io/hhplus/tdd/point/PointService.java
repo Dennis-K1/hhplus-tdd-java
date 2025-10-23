@@ -5,6 +5,9 @@ import io.hhplus.tdd.database.UserPointTable;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * 포인트 관리 서비스
@@ -25,10 +28,19 @@ public class PointService {
 
     private final UserPointTable userPointTable;
     private final PointHistoryTable pointHistoryTable;
+    private final ConcurrentHashMap<Long, Lock> userLocks;
 
     public PointService(UserPointTable userPointTable, PointHistoryTable pointHistoryTable) {
         this.userPointTable = userPointTable;
         this.pointHistoryTable = pointHistoryTable;
+        this.userLocks = new ConcurrentHashMap<>();
+    }
+
+    /**
+     * 유저별 락 획득
+     */
+    private Lock getUserLock(long userId) {
+        return userLocks.computeIfAbsent(userId, id -> new ReentrantLock());
     }
 
     /**
@@ -78,17 +90,23 @@ public class PointService {
             throw new IllegalArgumentException("Charge amount cannot exceed " + MAX_CHARGE_AMOUNT);
         }
 
-        UserPoint currentPoint = userPointTable.selectById(userId);
-        long newPoint = currentPoint.point() + amount;
+        Lock lock = getUserLock(userId);
+        lock.lock();
+        try {
+            UserPoint currentPoint = userPointTable.selectById(userId);
+            long newPoint = currentPoint.point() + amount;
 
-        if (newPoint > MAX_BALANCE) {
-            throw new IllegalArgumentException("Point balance cannot exceed " + MAX_BALANCE);
+            if (newPoint > MAX_BALANCE) {
+                throw new IllegalArgumentException("Point balance cannot exceed " + MAX_BALANCE);
+            }
+
+            UserPoint updatedPoint = userPointTable.insertOrUpdate(userId, newPoint);
+            pointHistoryTable.insert(userId, amount, TransactionType.CHARGE, System.currentTimeMillis());
+
+            return updatedPoint;
+        } finally {
+            lock.unlock();
         }
-
-        UserPoint updatedPoint = userPointTable.insertOrUpdate(userId, newPoint);
-        pointHistoryTable.insert(userId, amount, TransactionType.CHARGE, System.currentTimeMillis());
-
-        return updatedPoint;
     }
 
     /**
@@ -103,17 +121,23 @@ public class PointService {
         validateUserId(userId);
         validateTransactionAmount(amount);
 
-        UserPoint currentPoint = userPointTable.selectById(userId);
+        Lock lock = getUserLock(userId);
+        lock.lock();
+        try {
+            UserPoint currentPoint = userPointTable.selectById(userId);
 
-        if (currentPoint.point() < amount) {
-            throw new IllegalArgumentException("Insufficient point balance");
+            if (currentPoint.point() < amount) {
+                throw new IllegalArgumentException("Insufficient point balance");
+            }
+
+            long newPoint = currentPoint.point() - amount;
+
+            UserPoint updatedPoint = userPointTable.insertOrUpdate(userId, newPoint);
+            pointHistoryTable.insert(userId, amount, TransactionType.USE, System.currentTimeMillis());
+
+            return updatedPoint;
+        } finally {
+            lock.unlock();
         }
-
-        long newPoint = currentPoint.point() - amount;
-
-        UserPoint updatedPoint = userPointTable.insertOrUpdate(userId, newPoint);
-        pointHistoryTable.insert(userId, amount, TransactionType.USE, System.currentTimeMillis());
-
-        return updatedPoint;
     }
 }
