@@ -5,6 +5,10 @@ import io.hhplus.tdd.database.UserPointTable;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Supplier;
 
 /**
  * 포인트 관리 서비스
@@ -14,6 +18,13 @@ import java.util.List;
  *   <li>최소 거래 금액: 100 포인트 (충전/사용 모두 적용)</li>
  *   <li>1회 최대 충전 한도: 100,000 포인트</li>
  *   <li>최대 보유 한도: 1,000,000 포인트</li>
+ * </ul>
+ *
+ * <p>동시성 제어:
+ * <ul>
+ *   <li>유저별 락을 사용하여 동시 접근 제어</li>
+ *   <li>ReentrantLock을 통해 같은 유저의 포인트 연산을 순차적으로 처리</li>
+ *   <li>서로 다른 유저의 연산은 병렬로 처리 가능</li>
  * </ul>
  */
 @Service
@@ -25,10 +36,37 @@ public class PointService {
 
     private final UserPointTable userPointTable;
     private final PointHistoryTable pointHistoryTable;
+    private final ConcurrentHashMap<Long, Lock> userLocks;
 
     public PointService(UserPointTable userPointTable, PointHistoryTable pointHistoryTable) {
         this.userPointTable = userPointTable;
         this.pointHistoryTable = pointHistoryTable;
+        this.userLocks = new ConcurrentHashMap<>();
+    }
+
+    /**
+     * 유저별 락 획득
+     */
+    private Lock getUserLock(long userId) {
+        return userLocks.computeIfAbsent(userId, id -> new ReentrantLock());
+    }
+
+    /**
+     * 유저별 락을 사용하여 작업을 안전하게 실행
+     *
+     * @param userId 작업 대상 유저 ID
+     * @param operation 실행할 작업
+     * @param <T> 작업 결과 타입
+     * @return 작업 실행 결과
+     */
+    private <T> T executeWithLock(long userId, Supplier<T> operation) {
+        Lock lock = getUserLock(userId);
+        lock.lock();
+        try {
+            return operation.get();
+        } finally {
+            lock.unlock();
+        }
     }
 
     /**
@@ -78,17 +116,19 @@ public class PointService {
             throw new IllegalArgumentException("Charge amount cannot exceed " + MAX_CHARGE_AMOUNT);
         }
 
-        UserPoint currentPoint = userPointTable.selectById(userId);
-        long newPoint = currentPoint.point() + amount;
+        return executeWithLock(userId, () -> {
+            UserPoint currentPoint = userPointTable.selectById(userId);
+            long newPoint = currentPoint.point() + amount;
 
-        if (newPoint > MAX_BALANCE) {
-            throw new IllegalArgumentException("Point balance cannot exceed " + MAX_BALANCE);
-        }
+            if (newPoint > MAX_BALANCE) {
+                throw new IllegalArgumentException("Point balance cannot exceed " + MAX_BALANCE);
+            }
 
-        UserPoint updatedPoint = userPointTable.insertOrUpdate(userId, newPoint);
-        pointHistoryTable.insert(userId, amount, TransactionType.CHARGE, System.currentTimeMillis());
+            UserPoint updatedPoint = userPointTable.insertOrUpdate(userId, newPoint);
+            pointHistoryTable.insert(userId, amount, TransactionType.CHARGE, System.currentTimeMillis());
 
-        return updatedPoint;
+            return updatedPoint;
+        });
     }
 
     /**
@@ -103,17 +143,19 @@ public class PointService {
         validateUserId(userId);
         validateTransactionAmount(amount);
 
-        UserPoint currentPoint = userPointTable.selectById(userId);
+        return executeWithLock(userId, () -> {
+            UserPoint currentPoint = userPointTable.selectById(userId);
 
-        if (currentPoint.point() < amount) {
-            throw new IllegalArgumentException("Insufficient point balance");
-        }
+            if (currentPoint.point() < amount) {
+                throw new IllegalArgumentException("Insufficient point balance");
+            }
 
-        long newPoint = currentPoint.point() - amount;
+            long newPoint = currentPoint.point() - amount;
 
-        UserPoint updatedPoint = userPointTable.insertOrUpdate(userId, newPoint);
-        pointHistoryTable.insert(userId, amount, TransactionType.USE, System.currentTimeMillis());
+            UserPoint updatedPoint = userPointTable.insertOrUpdate(userId, newPoint);
+            pointHistoryTable.insert(userId, amount, TransactionType.USE, System.currentTimeMillis());
 
-        return updatedPoint;
+            return updatedPoint;
+        });
     }
 }

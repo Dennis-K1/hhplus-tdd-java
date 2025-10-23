@@ -7,6 +7,11 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -244,5 +249,157 @@ class PointServiceTest {
         assertThrows(IllegalArgumentException.class, () -> {
             pointService.usePoint(userId, belowMinimum);
         });
+    }
+
+    @Test
+    @DisplayName("동시성 제어 - 동시 충전 시 모든 충전이 정확히 반영됨")
+    void chargePoint_ConcurrentCharges() throws InterruptedException {
+        // given
+        long userId = 1L;
+        int threadCount = 10;
+        long chargeAmount = 1000L;
+        ExecutorService executorService = Executors.newFixedThreadPool(threadCount);
+        CountDownLatch latch = new CountDownLatch(threadCount);
+
+        // when
+        for (int i = 0; i < threadCount; i++) {
+            executorService.submit(() -> {
+                try {
+                    pointService.chargePoint(userId, chargeAmount);
+                } finally {
+                    latch.countDown();
+                }
+            });
+        }
+
+        latch.await(10, TimeUnit.SECONDS);
+        executorService.shutdown();
+
+        // then
+        UserPoint result = pointService.getUserPoint(userId);
+        assertEquals(threadCount * chargeAmount, result.point(),
+            "동시에 충전된 모든 포인트가 정확히 반영되어야 함");
+    }
+
+    @Test
+    @DisplayName("동시성 제어 - 동시 사용 시 모든 사용이 정확히 반영됨")
+    void usePoint_ConcurrentUses() throws InterruptedException {
+        // given
+        long userId = 1L;
+        int threadCount = 10;
+        long useAmount = 1000L;
+        long initialAmount = threadCount * useAmount;
+        pointService.chargePoint(userId, initialAmount);
+
+        ExecutorService executorService = Executors.newFixedThreadPool(threadCount);
+        CountDownLatch latch = new CountDownLatch(threadCount);
+
+        // when
+        for (int i = 0; i < threadCount; i++) {
+            executorService.submit(() -> {
+                try {
+                    pointService.usePoint(userId, useAmount);
+                } finally {
+                    latch.countDown();
+                }
+            });
+        }
+
+        latch.await(10, TimeUnit.SECONDS);
+        executorService.shutdown();
+
+        // then
+        UserPoint result = pointService.getUserPoint(userId);
+        assertEquals(0L, result.point(),
+            "동시에 사용된 모든 포인트가 정확히 차감되어야 함");
+    }
+
+    @Test
+    @DisplayName("동시성 제어 - 동시 충전/사용 혼합 시 최종 잔액이 정확함")
+    void mixedOperations_Concurrent() throws InterruptedException {
+        // given
+        long userId = 1L;
+        int chargeThreadCount = 5;
+        int useThreadCount = 3;
+        long chargeAmount = 1000L;
+        long useAmount = 500L;
+
+        ExecutorService executorService = Executors.newFixedThreadPool(chargeThreadCount + useThreadCount);
+        CountDownLatch latch = new CountDownLatch(chargeThreadCount + useThreadCount);
+
+        // when
+        // 충전 스레드
+        for (int i = 0; i < chargeThreadCount; i++) {
+            executorService.submit(() -> {
+                try {
+                    pointService.chargePoint(userId, chargeAmount);
+                } finally {
+                    latch.countDown();
+                }
+            });
+        }
+
+        // 사용 스레드
+        for (int i = 0; i < useThreadCount; i++) {
+            executorService.submit(() -> {
+                try {
+                    pointService.usePoint(userId, useAmount);
+                } finally {
+                    latch.countDown();
+                }
+            });
+        }
+
+        latch.await(10, TimeUnit.SECONDS);
+        executorService.shutdown();
+
+        // then
+        UserPoint result = pointService.getUserPoint(userId);
+        long expectedPoint = (chargeThreadCount * chargeAmount) - (useThreadCount * useAmount);
+        assertEquals(expectedPoint, result.point(),
+            "충전과 사용이 동시에 발생해도 최종 잔액이 정확해야 함");
+    }
+
+    @Test
+    @DisplayName("동시성 제어 - 잔액 부족 시 일부만 성공")
+    void usePoint_ConcurrentWithInsufficientBalance() throws InterruptedException {
+        // given
+        long userId = 1L;
+        long initialAmount = 5000L;
+        pointService.chargePoint(userId, initialAmount);
+
+        int threadCount = 10;
+        long useAmount = 1000L;
+        ExecutorService executorService = Executors.newFixedThreadPool(threadCount);
+        CountDownLatch latch = new CountDownLatch(threadCount);
+        AtomicInteger successCount = new AtomicInteger(0);
+        AtomicInteger failCount = new AtomicInteger(0);
+
+        // when
+        for (int i = 0; i < threadCount; i++) {
+            executorService.submit(() -> {
+                try {
+                    pointService.usePoint(userId, useAmount);
+                    successCount.incrementAndGet();
+                } catch (IllegalArgumentException e) {
+                    failCount.incrementAndGet();
+                } finally {
+                    latch.countDown();
+                }
+            });
+        }
+
+        latch.await(10, TimeUnit.SECONDS);
+        executorService.shutdown();
+
+        // then
+        UserPoint result = pointService.getUserPoint(userId);
+        long expectedSuccessCount = initialAmount / useAmount; // 5번 성공 예상
+        assertEquals(expectedSuccessCount, successCount.get(),
+            "잔액 범위 내에서만 사용이 성공해야 함");
+        assertEquals(threadCount - expectedSuccessCount, failCount.get(),
+            "잔액 초과 시도는 실패해야 함");
+        assertEquals(0L, result.point(),
+            "최종 잔액은 0이어야 함");
     }
 }
