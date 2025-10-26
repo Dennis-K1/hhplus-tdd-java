@@ -3,6 +3,7 @@ package io.hhplus.tdd.point;
 import io.hhplus.tdd.database.PointHistoryTable;
 import io.hhplus.tdd.database.UserPointTable;
 import io.hhplus.tdd.point.exception.*;
+import io.hhplus.tdd.point.validator.PointValidator;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -31,17 +32,15 @@ import java.util.function.Supplier;
 @Service
 public class PointService {
 
-    private static final long MIN_TRANSACTION_AMOUNT = 100L;
-    private static final long MAX_CHARGE_AMOUNT = 100_000L;
-    private static final long MAX_BALANCE = 1_000_000L;
-
     private final UserPointTable userPointTable;
     private final PointHistoryTable pointHistoryTable;
+    private final PointValidator pointValidator;
     private final ConcurrentHashMap<Long, Lock> userLocks;
 
-    public PointService(UserPointTable userPointTable, PointHistoryTable pointHistoryTable) {
+    public PointService(UserPointTable userPointTable, PointHistoryTable pointHistoryTable, PointValidator pointValidator) {
         this.userPointTable = userPointTable;
         this.pointHistoryTable = pointHistoryTable;
+        this.pointValidator = pointValidator;
         this.userLocks = new ConcurrentHashMap<>();
     }
 
@@ -70,34 +69,13 @@ public class PointService {
         }
     }
 
-    /**
-     * 유저 ID 유효성 검사
-     */
-    private void validateUserId(long userId) {
-        if (userId <= 0) {
-            throw new InvalidUserIdException(userId);
-        }
-    }
-
-    /**
-     * 거래 금액 유효성 검사 (충전/사용 공통)
-     */
-    private void validateTransactionAmount(long amount) {
-        if (amount <= 0) {
-            throw InvalidAmountException.zeroOrNegative(amount);
-        }
-        if (amount < MIN_TRANSACTION_AMOUNT) {
-            throw InvalidAmountException.belowMinimum(amount, MIN_TRANSACTION_AMOUNT);
-        }
-    }
-
     public UserPoint getUserPoint(long userId) {
-        validateUserId(userId);
+        pointValidator.validateUserId(userId);
         return userPointTable.selectById(userId);
     }
 
     public List<PointHistory> getUserPointHistory(long userId) {
-        validateUserId(userId);
+        pointValidator.validateUserId(userId);
         return pointHistoryTable.selectAllByUserId(userId);
     }
 
@@ -112,21 +90,15 @@ public class PointService {
      * @throws PointLimitExceededException 충전/잔액 한도 초과
      */
     public UserPoint chargePoint(long userId, long amount) {
-        validateUserId(userId);
-        validateTransactionAmount(amount);
-
-        if (amount > MAX_CHARGE_AMOUNT) {
-            throw PointLimitExceededException.chargeLimit(amount, MAX_CHARGE_AMOUNT);
-        }
+        pointValidator.validateUserId(userId);
+        pointValidator.validateTransactionAmount(amount);
+        pointValidator.validateChargeAmount(amount);
 
         return executeWithLock(userId, () -> {
             UserPoint currentPoint = userPointTable.selectById(userId);
+            pointValidator.validateBalanceLimit(currentPoint.point(), amount);
+
             long newPoint = currentPoint.point() + amount;
-
-            if (newPoint > MAX_BALANCE) {
-                throw PointLimitExceededException.balanceLimit(newPoint, MAX_BALANCE);
-            }
-
             UserPoint updatedPoint = userPointTable.insertOrUpdate(userId, newPoint);
             pointHistoryTable.insert(userId, amount, TransactionType.CHARGE, System.currentTimeMillis());
 
@@ -145,8 +117,8 @@ public class PointService {
      * @throws InsufficientPointException 잔액 부족
      */
     public UserPoint usePoint(long userId, long amount) {
-        validateUserId(userId);
-        validateTransactionAmount(amount);
+        pointValidator.validateUserId(userId);
+        pointValidator.validateTransactionAmount(amount);
 
         return executeWithLock(userId, () -> {
             UserPoint currentPoint = userPointTable.selectById(userId);
@@ -156,7 +128,6 @@ public class PointService {
             }
 
             long newPoint = currentPoint.point() - amount;
-
             UserPoint updatedPoint = userPointTable.insertOrUpdate(userId, newPoint);
             pointHistoryTable.insert(userId, amount, TransactionType.USE, System.currentTimeMillis());
 

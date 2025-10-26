@@ -3,6 +3,7 @@ package io.hhplus.tdd.point;
 import io.hhplus.tdd.database.PointHistoryTable;
 import io.hhplus.tdd.database.UserPointTable;
 import io.hhplus.tdd.point.exception.*;
+import io.hhplus.tdd.point.validator.PointValidator;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -22,12 +23,14 @@ class PointServiceTest {
     private PointService pointService;
     private UserPointTable userPointTable;
     private PointHistoryTable pointHistoryTable;
+    private PointValidator pointValidator;
 
     @BeforeEach
     void setUp() {
         userPointTable = new UserPointTable();
         pointHistoryTable = new PointHistoryTable();
-        pointService = new PointService(userPointTable, pointHistoryTable);
+        pointValidator = new PointValidator();
+        pointService = new PointService(userPointTable, pointHistoryTable, pointValidator);
     }
 
     @Test
