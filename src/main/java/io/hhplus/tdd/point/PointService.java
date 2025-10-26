@@ -2,6 +2,7 @@ package io.hhplus.tdd.point;
 
 import io.hhplus.tdd.database.PointHistoryTable;
 import io.hhplus.tdd.database.UserPointTable;
+import io.hhplus.tdd.point.exception.*;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -74,7 +75,7 @@ public class PointService {
      */
     private void validateUserId(long userId) {
         if (userId <= 0) {
-            throw new IllegalArgumentException("User ID must be greater than 0");
+            throw new InvalidUserIdException(userId);
         }
     }
 
@@ -83,10 +84,10 @@ public class PointService {
      */
     private void validateTransactionAmount(long amount) {
         if (amount <= 0) {
-            throw new IllegalArgumentException("Amount must be greater than 0");
+            throw InvalidAmountException.zeroOrNegative(amount);
         }
         if (amount < MIN_TRANSACTION_AMOUNT) {
-            throw new IllegalArgumentException("Transaction amount must be at least " + MIN_TRANSACTION_AMOUNT);
+            throw InvalidAmountException.belowMinimum(amount, MIN_TRANSACTION_AMOUNT);
         }
     }
 
@@ -106,14 +107,16 @@ public class PointService {
      * @param userId 사용자 ID
      * @param amount 충전 금액
      * @return 충전 후 사용자 포인트 정보
-     * @throws IllegalArgumentException 유효하지 않은 입력값 또는 정책 위반 시
+     * @throws InvalidUserIdException 유효하지 않은 사용자 ID
+     * @throws InvalidAmountException 유효하지 않은 금액
+     * @throws PointLimitExceededException 충전/잔액 한도 초과
      */
     public UserPoint chargePoint(long userId, long amount) {
         validateUserId(userId);
         validateTransactionAmount(amount);
 
         if (amount > MAX_CHARGE_AMOUNT) {
-            throw new IllegalArgumentException("Charge amount cannot exceed " + MAX_CHARGE_AMOUNT);
+            throw PointLimitExceededException.chargeLimit(amount, MAX_CHARGE_AMOUNT);
         }
 
         return executeWithLock(userId, () -> {
@@ -121,7 +124,7 @@ public class PointService {
             long newPoint = currentPoint.point() + amount;
 
             if (newPoint > MAX_BALANCE) {
-                throw new IllegalArgumentException("Point balance cannot exceed " + MAX_BALANCE);
+                throw PointLimitExceededException.balanceLimit(newPoint, MAX_BALANCE);
             }
 
             UserPoint updatedPoint = userPointTable.insertOrUpdate(userId, newPoint);
@@ -137,7 +140,9 @@ public class PointService {
      * @param userId 사용자 ID
      * @param amount 사용 금액
      * @return 사용 후 사용자 포인트 정보
-     * @throws IllegalArgumentException 유효하지 않은 입력값, 잔액 부족 또는 정책 위반 시
+     * @throws InvalidUserIdException 유효하지 않은 사용자 ID
+     * @throws InvalidAmountException 유효하지 않은 금액
+     * @throws InsufficientPointException 잔액 부족
      */
     public UserPoint usePoint(long userId, long amount) {
         validateUserId(userId);
@@ -147,7 +152,7 @@ public class PointService {
             UserPoint currentPoint = userPointTable.selectById(userId);
 
             if (currentPoint.point() < amount) {
-                throw new IllegalArgumentException("Insufficient point balance");
+                throw new InsufficientPointException(currentPoint.point(), amount);
             }
 
             long newPoint = currentPoint.point() - amount;

@@ -2,6 +2,7 @@ package io.hhplus.tdd.point;
 
 import io.hhplus.tdd.database.PointHistoryTable;
 import io.hhplus.tdd.database.UserPointTable;
+import io.hhplus.tdd.point.exception.*;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -51,7 +52,7 @@ class PointServiceTest {
         long invalidUserId = 0L;
 
         // when & then
-        assertThrows(IllegalArgumentException.class, () -> {
+        assertThrows(InvalidUserIdException.class, () -> {
             pointService.getUserPoint(invalidUserId);
         });
     }
@@ -95,7 +96,7 @@ class PointServiceTest {
         long invalidAmount = -100L;
 
         // when & then
-        assertThrows(IllegalArgumentException.class, () -> {
+        assertThrows(InvalidAmountException.class, () -> {
             pointService.chargePoint(userId, invalidAmount);
         });
     }
@@ -122,7 +123,7 @@ class PointServiceTest {
         pointService.chargePoint(userId, 500L);
 
         // when & then
-        assertThrows(IllegalArgumentException.class, () -> {
+        assertThrows(InsufficientPointException.class, () -> {
             pointService.usePoint(userId, 1000L);
         });
     }
@@ -135,7 +136,7 @@ class PointServiceTest {
         pointService.chargePoint(userId, 1000L);
 
         // when & then
-        assertThrows(IllegalArgumentException.class, () -> {
+        assertThrows(InvalidAmountException.class, () -> {
             pointService.usePoint(userId, 0L);
         });
     }
@@ -197,7 +198,7 @@ class PointServiceTest {
         long exceedAmount = 100_001L;
 
         // when & then
-        assertThrows(IllegalArgumentException.class, () -> {
+        assertThrows(PointLimitExceededException.class, () -> {
             pointService.chargePoint(userId, exceedAmount);
         });
     }
@@ -210,7 +211,7 @@ class PointServiceTest {
         long belowMinimum = 99L;
 
         // when & then
-        assertThrows(IllegalArgumentException.class, () -> {
+        assertThrows(InvalidAmountException.class, () -> {
             pointService.chargePoint(userId, belowMinimum);
         });
     }
@@ -232,7 +233,7 @@ class PointServiceTest {
         // Total: 900,000
 
         // when & then
-        assertThrows(IllegalArgumentException.class, () -> {
+        assertThrows(PointLimitExceededException.class, () -> {
             pointService.chargePoint(userId, 100_001L); // Total would be 1,000,001
         });
     }
@@ -246,7 +247,7 @@ class PointServiceTest {
         long belowMinimum = 99L;
 
         // when & then
-        assertThrows(IllegalArgumentException.class, () -> {
+        assertThrows(InvalidAmountException.class, () -> {
             pointService.usePoint(userId, belowMinimum);
         });
     }
@@ -381,7 +382,7 @@ class PointServiceTest {
                 try {
                     pointService.usePoint(userId, useAmount);
                     successCount.incrementAndGet();
-                } catch (IllegalArgumentException e) {
+                } catch (InsufficientPointException e) {
                     failCount.incrementAndGet();
                 } finally {
                     latch.countDown();
