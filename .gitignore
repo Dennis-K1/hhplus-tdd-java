@@ -24,9 +24,6 @@ out/
 # macOS
 .DS_Store
 
-# Application specific
-gradle.properties
-
 # Log files
 *.log
 
