@@ -1,5 +1,7 @@
 package io.hhplus.tdd.point;
 
+import io.hhplus.tdd.point.dto.PointHistoryResponse;
+import io.hhplus.tdd.point.dto.UserPointResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.*;
@@ -21,35 +23,37 @@ public class PointController {
      * 특정 유저의 포인트를 조회합니다.
      */
     @GetMapping("{id}")
-    public UserPoint point(@PathVariable long id) {
+    public UserPointResponse point(@PathVariable long id) {
         log.info("Fetching point for user: {}", id);
-        return pointService.getUserPoint(id);
+        return UserPointResponse.from(pointService.getUserPoint(id));
     }
 
     /**
      * 특정 유저의 포인트 충전/이용 내역을 조회합니다.
      */
     @GetMapping("{id}/histories")
-    public List<PointHistory> history(@PathVariable long id) {
+    public List<PointHistoryResponse> history(@PathVariable long id) {
         log.info("Fetching point history for user: {}", id);
-        return pointService.getUserPointHistory(id);
+        return pointService.getUserPointHistory(id).stream()
+            .map(PointHistoryResponse::from)
+            .toList();
     }
 
     /**
      * 특정 유저의 포인트를 충전합니다.
      */
     @PatchMapping("{id}/charge")
-    public UserPoint charge(@PathVariable long id, @RequestBody long amount) {
+    public UserPointResponse charge(@PathVariable long id, @RequestBody long amount) {
         log.info("Charging {} points for user: {}", amount, id);
-        return pointService.chargePoint(id, amount);
+        return UserPointResponse.from(pointService.chargePoint(id, amount));
     }
 
     /**
      * 특정 유저의 포인트를 사용합니다.
      */
     @PatchMapping("{id}/use")
-    public UserPoint use(@PathVariable long id, @RequestBody long amount) {
+    public UserPointResponse use(@PathVariable long id, @RequestBody long amount) {
         log.info("Using {} points for user: {}", amount, id);
-        return pointService.usePoint(id, amount);
+        return UserPointResponse.from(pointService.usePoint(id, amount));
     }
 }
